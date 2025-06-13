@@ -1,20 +1,73 @@
-#define LIMIT_X 9
-#define LIMIT_Y 10
+/*
+Connections-
 
-#define ENABLE 8
-#define DIR_X 5
-#define DIR_Y 6
-#define STEP_X 2
-#define STEP_Y 3
-#define DIR_Z 7
-#define STEP_Z 4
+To arduino nano
 
+StepperX : IN1 --> D2
+           IN2 --> D3
+           IN3 --> D4
+           IN4 --> D5
+
+StepperY : IN1 --> D6
+           IN2 --> D7
+           IN3 --> D8
+           IN4 --> D9
+
+StepperZ : IN1 --> D10
+           IN2 --> D11
+           IN3 --> D12
+           IN4 --> D13
+
+SwitchX : 1st End --> 5V
+          2nd End --> A0
+
+SwitchY : 1st End --> 5V
+          2nd End --> A1
+
+HC-05 : VCC --> 5V
+        GND --> GND
+        TX --> RX
+        RX --> TX
+          
+*/
+
+
+
+//include the libraries
+#include <AccelStepper.h>
+
+//define the pin connections and variables
+//switches:
+#define SWITCH_X A0
+#define SWITCH_Y A1
+
+//motors:
+#define FullStep 4
+#define Step_Per_Revolution 2048
+
+AccelStepper StepperX(FullStep, 2, 4, 3, 5);
+AccelStepper StepperY(FullStep, 6, 8, 7, 9);
+AccelStepper StepperZ(FullStep, 10, 12, 11, 13);
+
+const int STEPS[8][4] = {
+  {1, 0, 0, 0},
+  {1, 1, 0, 0},
+  {0, 1, 0, 0},
+  {0, 1, 1, 0},
+  {0, 0, 1, 0},
+  {0, 0, 1, 1},
+  {0, 0, 0, 1},
+  {1, 0, 0, 1}
+};
+
+int currentStepX = 0;
+int currentStepY = 0;
+int currentStepZ = 0;
 //Measurements, from home, of the working area, in steps
 // will need to adjust
 #define Y_MAX 30921
 #define X_MAX 18995
-#define Z_MIN_STEPS -256   // -45 degrees
-#define Z_MAX_STEPS  256   // +45 degrees
+#define Z_MAX_STEPS  512   // 905 degrees
 
 /* "NO"   600   5500
    "YES"  600   24600
@@ -48,41 +101,53 @@
 int current_x = 0;
 int current_y = 0;
 int current_z = 0; 
-bool z_dir = true;
 
 struct point {
   int x;
   int y;
 };
+//10 numbers, in order 0-9
+struct point numbers[10] = {
+  {18000, 1000},  // 0
+  {16500, 3000},  // 1
+  {15000, 5000},  // 2
+  {13500, 7000},  // 3
+  {12000, 9000},  // 4
+  {10500, 11000}, // 5
+  {9000, 13000},  // 6
+  {7500, 15000},  // 7
+  {6000, 17000},  // 8
+  {4500, 19000}   // 9
+};
 
 //26 letters, in order a-z
 struct point letters[26] = {
-  {8800, 29000},
-  {7200, 26500},
-  {6500, 24000},
-  {5500, 22000},
-  {5200, 20000},
-  {5100, 17500},
-  {5000, 15500},
-  {5000, 13500},
-  {5000, 11000},
-  {5500, 9000},
-  {6000, 7000},
-  {6800, 4500},
-  {8300, 2300},
-  {13200, 28300},
-  {11600, 26400},
-  {10600, 24400},
-  {9600, 22400},
-  {8800, 20200},
-  {8600, 17700},
-  {8400, 15700},
-  {8100, 13500},
-  {8300, 11000},
-  {9000, 8500},
-  {10500, 6100},
-  {11500, 4000},
-  {12800, 1800}
+  {8800, 29000},//a
+  {7200, 26500},//b
+  {6500, 24000},//c
+  {5500, 22000},//d
+  {5200, 20000},//e
+  {5100, 17500},//f
+  {5000, 15500},//g
+  {5000, 13500},//h
+  {5000, 11000},//i
+  {5500, 9000},//j
+  {6000, 7000},//k
+  {6800, 4500},//l
+  {8300, 2300},//m
+  {13200, 28300},//n
+  {11600, 26400},//o
+  {10600, 24400},//p
+  {9600, 22400},//q
+  {8800, 20200},//r
+  {8600, 17700},//s
+  {8400, 15700},//t
+  {8100, 13500},//u
+  {8300, 11000},//v
+  {9000, 8500},//w
+  {10500, 6100},//x
+  {11500, 4000},//y
+  {12800, 1800}//z
 };
 
 String serial_cmd;
@@ -92,14 +157,12 @@ void setup() {
   pinMode(SWITCH_X, INPUT);
   pinMode(SWITCH_Y, INPUT);
 
-  //Set up the stepper control
-  pinMode(ENABLE, OUTPUT);
-  pinMode(DIR_X, OUTPUT);
-  pinMode(DIR_Y, OUTPUT);
-  pinMode(STEP_X, OUTPUT);
-  pinMode(STEP_Y, OUTPUT);
-  pinMode(DIR_Z, OUTPUT);
-  pinMode(STEP_Z, OUTPUT);
+  StepperX.setMaxSpeed(1000);
+  StepperX.setAcceleration(100);
+  StepperY.setMaxSpeed(1000);
+  StepperY.setAcceleration(100);
+  StepperZ.setMaxSpeed(400);
+  StepperZ.setAcceleration(30);
 
   //For debugging
   Serial.begin(9600);
@@ -111,202 +174,108 @@ void setup() {
 
 
 void move_home() {
-  //Enable stepper drivers
-  digitalWrite(ENABLE, LOW);
+  StepperX.setSpeed(-400);
+  StepperY.SetSpeed(-400);
 
-  //Home x axis first
-  digitalWrite(DIR_X, LOW);
-  digitalWrite(STEP_X, LOW);
-  while (digitalRead(LIMIT_X) == 1) {
-    digitalWrite(STEP_X, HIGH);
-    delayMicroseconds(200);
-    digitalWrite(STEP_X, LOW);
-    delayMicroseconds(200);
+  Serial.println("Homing the motors")
+  //initialize the x-axis motor
+  while(digitalRead(SWITCH_X)){
+    StepperX.runSpeed();
   }
+  StepperX.setCurrentPosition(0);
 
-  //Home Y axis, it uses opposite DIR_Y setting
-  digitalWrite(DIR_Y, HIGH);
-  digitalWrite(STEP_Y, LOW);
-  while (digitalRead(LIMIT_Y) == 1) {
-    digitalWrite(STEP_Y, HIGH);
-    delayMicroseconds(200);
-    digitalWrite(STEP_Y, LOW);
-    delayMicroseconds(200);
+  //initialize the y-axis motor
+  while(digitalRead(SWITCH_Y)){
+    StepperY.runSpeed();
   }
-
-  //Disable stepper drivers
-  digitalWrite(ENABLE, HIGH);
-
-  //Reset the position counters
-  current_x = current_y = 0;
+  StepperY.setCurrentPosition(0);
+  
+  Serial.println("Homed the Motors")
 }
 
-void single_step(int dir, int axis, int vel) {
+void move_to(long x, long y, int speed) {
 
-  // Enable axis and maintain step counts
-  digitalWrite(ENABLE, LOW);
-  if (axis == STEP_X) {
-    digitalWrite(DIR_X, dir);
-    //High is away from home for X
-    if (dir) {
-      current_x++;
-    }
-    else {
-      current_x--;
-    }
-  }
-  else {
-    digitalWrite(DIR_Y, dir);
-    //HIGH is towards home for Y
-    if (dir) {
-      current_y--;
-    }
-    else {
-      current_y++;
-    }
-  }
-
-  // Single step
-  digitalWrite(axis, HIGH);
-  delayMicroseconds(vel);
-  digitalWrite(axis, LOW);
-  delayMicroseconds(vel);
-}
-
-void move_to(int x, int y, int vel) {
-  //In this house, we only move within the operating area of the gantry
-  y = constrain(y, 0, Y_MAX);
   x = constrain(x, 0, X_MAX);
+  y = constrain(y, 0, Y_MAX);
 
-  //Figure out X and Y directions
-  int x_dir = HIGH;  // Away from home
-  if ((current_x - x) > 0) {
-    x_dir = LOW;  // Towards home
+  StepperX.moveTo(x);
+  StepperY.moveTo(y);
+
+  StepperX.setSpeed(speed);
+  StepperY.setSpeed(speed);
+
+  while (StepperX.distanceToGo() != 0 || StepperY.distanceToGo() != 0){
+    StepperX.run();
+    StepperY.run();
+    step_z_wobble(100);
   }
-
-  int y_dir = LOW;  //Away from home
-  if ((current_y - y) > 0) {
-    y_dir = HIGH;  // Towards home
-  }
-
-  //Ratio of X to Y, so how many steps to take of each per cycle
-  float ratio = float(abs(current_x - x)) / float(abs(current_y - y));
-
-  int stepX, stepY;
-  if (ratio >= 1) {
-    stepX = int(ratio);
-    stepY = 1;
-  } else {
-    stepX = 1;
-    stepY = int(1.0 / ratio);
-  }
-
-  while ((current_y != y) || (current_x != x)) {
-  bool moved = false;
   
-  for (int ii = 0; ii < stepX && current_x != x; ii++) {
-    single_step(x_dir, STEP_X, vel);
-    moved = true;
-  }
-  for (int ii = 0; ii < stepY && current_y != y; ii++) {
-    single_step(y_dir, STEP_Y, vel);
-    moved = true;
-  }
-
-  if (moved) {
-    step_z_wobble(vel); // Wiggle Z after each movement batch
-  }
 }
 
-  while (current_y != y) {
-    single_step(y_dir, STEP_Y, vel);
-  }
+void step_z_wobble(int speed) {
+  static int z_pos = 0;
+  static bool z_dir = true;
 
-  while (current_x != x) {
-    single_step(x_dir, STEP_X, vel);
-  }
-}
-void step_z_wobble(int vel) {
-  static int z_steps = 0;
-  int max_wobble = 256; // ±45 degrees
+  stepperZ.setSpeed(z_dir ? speed : -speed);
+  stepperZ.runSpeed();
+  z_pos += z_dir ? 1 : -1;
 
-  digitalWrite(DIR_Z, z_dir ? HIGH : LOW);
-  digitalWrite(STEP_Z, HIGH);
-  delayMicroseconds(vel);
-  digitalWrite(STEP_Z, LOW);
-  delayMicroseconds(vel);
-
-  if (z_dir) current_z++;
-  else current_z--;
-
-  z_steps++;
-  
-  // Reverse direction if at limits
-  if (current_z >= max_wobble || current_z <= -max_wobble) {
+  if (z_pos >= Z_MAX_STEPS || z_pos <= Z_MIN_STEPS) {
     z_dir = !z_dir;
   }
 }
+
+
 void say_string(String msg) {
-  int index = 0;
-  struct point p;
-  //For all the letters
-  for (int ii = 0; ii < msg.length(); ii++) {
-    //String is all lowercase, so subtracting 'a' converts from ascii
-    //to a=0, b=1, c=2,..., which can then be used to
-    //look up coordinates in a lookup table and move
-    index = msg[ii] - 'a';
-    p = letters[index];
-    move_to(p.x, p.y, 50);
-    //Delay to let people read it off
-    delay(700);
-    //If the next letter is the same as this letter
-    while ((ii != msg.length() - 1) && (msg[ii] == msg[ii + 1])) {
-      //Skip the next letter
-      ii++;
-      //move off this letter and then back on
-      move_to(current_x - 800, current_y - 800, 50);
-      move_to(current_x + 800, current_y + 800, 50);
-      delay(1000);
+  for(int i = 0; i < msg.length(); i++){
+    char c = msg[i];
+    if (c >= 'a' && c<= 'Z'){
+      point p = letters[c-'a'];
+      move_to(p.x, p.y, 400);
+      delay(500);
     }
   }
 }
 
-bool close_to(int a, int b, int thresh){
-  return b-thresh <= a <= b+thresh;  
+void say_num(String nums) {
+  for (int i = 0; i < nums.length(); i++) {
+    char c = nums[i];
+    if (c >= '0' && c <= '9') {
+      point p = numbers[c - '0'];
+      move_to(p.x, p.y, 400);
+      delay(700);
+    }
+  }
 }
 
 void loop() {
-  // TODO: Velocity curves/trapezoidal acceleration
-  // proportional speed based on distance, can treat X and Y seperately
-  // Figure out top speed
-
-  while (!Serial.available()) {
-  } // wait for data to arrive
-
-  int index = 0;
-  char *tok;
-  long x, y;
 
   if (Serial.available()) {
     serial_cmd = Serial.readStringUntil('\n');
     //Previous line would block until we got something, now parse it
     if (serial_cmd.startsWith("s")) {
-
-      //Split on first space, command is of the form "s some string here"
-      index = serial_cmd.indexOf(" ");
-      String message = serial_cmd.substring(index + 1);
+      String message = serial_cmd.substring(2);
       //Send it back as confirmation
       Serial.println(message);
       say_string(message);
 
     }
+    else if (serial_cmd.startsWith("l")){
+      String numberss = serial_cmd.substring(2);
+      //Send it back as confirmation
+      Serial.println(numberss);
+      say_num(numberss);
+
+    }
     else if (serial_cmd.startsWith("m")) {
+
+      int spaceIndex = serial_cmd.indefOf(" ",2);
 
       //Split on spaces, command is of the form "m xx yy"
       //second and third entries are x and y
       index = serial_cmd.indexOf(" ");
-      x = serial_cmd.substring(index + 1, serial_cmd.indexOf(" ", index + 1)).toInt();
-      y = serial_cmd.substring(serial_cmd.indexOf(" ", index + 1)).toInt();
+      long x = serial_cmd.substring(2, spaceIndex).toInt();
+      long y = serial_cmd.substring(spaceIndex +1 ).toInt();
 
       //Send it back as confirmation
       Serial.print("Move to ");
@@ -317,7 +286,13 @@ void loop() {
       Serial.print(current_x);
       Serial.print(" ");
       Serial.println(current_y);
-      move_to(x, y, 100);
+      if ((current_x == x) && (current_y == y)){
+        move_to(current_x + 800, current_y - 800, 100);
+        move_to(current_x - 800, current_y + 800, 100);
+      }
+      else{
+      move_to(x, y, 400);
+      }
     }
 
     else if (serial_cmd.startsWith("h")) {
