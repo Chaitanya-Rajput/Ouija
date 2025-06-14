@@ -35,6 +35,7 @@ HC-05 : VCC --> 5V
 
 //include the libraries
 #include <AccelStepper.h>
+#include <Stepper.h>
 
 //define the pin connections and variables
 //switches:
@@ -43,11 +44,11 @@ HC-05 : VCC --> 5V
 
 //motors:
 #define FullStep 4
-#define Step_Per_Revolution 2048
+#define Steps_Per_Revolution 2048
 
-AccelStepper StepperX(FullStep, 2, 4, 3, 5);
-AccelStepper StepperY(FullStep, 6, 8, 7, 9);
-AccelStepper StepperZ(FullStep, 10, 12, 11, 13);
+Stepper StepperX(Steps_Per_Revolution, 2, 3, 4, 5);
+Stepper StepperY(Steps_Per_Revolution, 6, 7, 8, 9);
+Stepper StepperZ(Steps_Per_Revolution, 10, 11, 12, 13);
 
 const int STEPS[8][4] = {
   {1, 0, 0, 0},
@@ -60,14 +61,16 @@ const int STEPS[8][4] = {
   {1, 0, 0, 1}
 };
 
-int currentStepX = 0;
-int currentStepY = 0;
+int StepSpeed = 100;
+long currentStepX = 0;
+long currentStepY = 0;
 int currentStepZ = 0;
 //Measurements, from home, of the working area, in steps
 // will need to adjust
 #define Y_MAX 30921
 #define X_MAX 18995
-#define Z_MAX_STEPS  512   // 905 degrees
+#define Z_MAX_STEPS  256   // +45 degrees
+#define Z_MIN_STEPS -256   // -45 degrees
 
 /* "NO"   600   5500
    "YES"  600   24600
@@ -174,21 +177,21 @@ void setup() {
 
 
 void move_home() {
-  StepperX.setSpeed(-400);
-  StepperY.SetSpeed(-400);
 
   Serial.println("Homing the motors")
   //initialize the x-axis motor
-  while(digitalRead(SWITCH_X)){
-    StepperX.runSpeed();
+  while(digitalRead(SWITCH_X) == HIGH){
+    StepperX.step(-1);
+    delay(2);
   }
-  StepperX.setCurrentPosition(0);
 
   //initialize the y-axis motor
   while(digitalRead(SWITCH_Y)){
-    StepperY.runSpeed();
+    StepperY.step(-1);
+    delay(2);
   }
-  StepperY.setCurrentPosition(0);
+  current_x = 0;
+  current_y = 0;
   
   Serial.println("Homed the Motors")
 }
@@ -198,27 +201,42 @@ void move_to(long x, long y, int speed) {
   x = constrain(x, 0, X_MAX);
   y = constrain(y, 0, Y_MAX);
 
-  StepperX.moveTo(x);
-  StepperY.moveTo(y);
+  long target_x = x - current_x;
+  long target_y = y - current_y;
 
   StepperX.setSpeed(speed);
   StepperY.setSpeed(speed);
 
-  while (StepperX.distanceToGo() != 0 || StepperY.distanceToGo() != 0){
-    StepperX.run();
-    StepperY.run();
-    step_z_wobble(100);
+  while (target_x != 0 || target_y != 0){
+    if (target_x != 0){
+      StepperX.step((target_x > 0) ? 1 : -1);
+      current_x = (target_x > 0) ? 1 : -1;
+      target_x = x - current_x;
+    }
+    if (target_y != 0){
+      StepperY.step((target_y > 0) ? 1 : -1);
+      current_y = (target_y > 0) ? 1 : -1;
+      target_y = y - current_y;
+    }
+    step_z_wobble();
+
+    delay(1000/speed);
   }
   
 }
 
-void step_z_wobble(int speed) {
+void step_z_wobble() {
   static int z_pos = 0;
   static bool z_dir = true;
 
-  stepperZ.setSpeed(z_dir ? speed : -speed);
-  stepperZ.runSpeed();
-  z_pos += z_dir ? 1 : -1;
+  if(z_dir){
+    StepperZ.step(1);
+    z_pos++;
+  }
+  else{
+    StepperZ.step(-1);
+    z_pos--;
+  }
 
   if (z_pos >= Z_MAX_STEPS || z_pos <= Z_MIN_STEPS) {
     z_dir = !z_dir;
